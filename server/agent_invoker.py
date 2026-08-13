@@ -19,9 +19,16 @@ from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 # Ensure the server directory is in path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_server_dir = str(Path(__file__).resolve().parent)
+if _server_dir not in sys.path:
+    sys.path.insert(0, _server_dir)
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+# Load .env — try server dir first, then parent
+_env_file = Path(_server_dir) / ".env"
+if not _env_file.exists():
+    _env_file = Path(_server_dir).parent / ".env"
+if _env_file.exists():
+    load_dotenv(dotenv_path=_env_file)
 
 logger = logging.getLogger("sethaul.agent_invoker")
 

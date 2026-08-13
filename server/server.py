@@ -26,9 +26,15 @@ import uvicorn
 from dotenv import load_dotenv
 
 # Ensure the server directory is in the Python path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_server_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(_server_dir))
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
+# Load .env — try server dir first, then parent (for local dev)
+_env_path = _server_dir / ".env"
+if not _env_path.exists():
+    _env_path = _server_dir.parent / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
 
 from db import (
     get_driver_by_phone,

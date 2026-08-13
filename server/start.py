@@ -17,8 +17,11 @@ import sys
 import multiprocessing
 from pathlib import Path
 
-# Ensure server directory is in path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Ensure server directory is in path — MUST be before any local imports
+_server_dir = str(Path(__file__).resolve().parent)
+if _server_dir not in sys.path:
+    sys.path.insert(0, _server_dir)
+os.chdir(_server_dir)
 
 
 def run_fastapi():
