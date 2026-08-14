@@ -100,7 +100,7 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "https://*.vercel.app",
+    "https://sethaul.vercel.app"
 ]
 
 # In production, set CORS_ORIGINS env var to your Vercel domain
