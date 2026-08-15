@@ -21,7 +21,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import uvicorn
 from dotenv import load_dotenv
 
 # Ensure the server directory is in the Python path
@@ -1821,6 +1820,7 @@ async def create_shipment(body: CreateShipmentRequest):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(
         "server:app",
