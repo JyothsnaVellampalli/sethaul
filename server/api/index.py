@@ -16,3 +16,4 @@ if _server_dir not in sys.path:
     sys.path.insert(0, _server_dir)
 
 from server import app
+
