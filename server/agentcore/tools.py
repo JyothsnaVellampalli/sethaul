@@ -1,24 +1,22 @@
 """
-SetuHaul Agent Tools — Strands Tool Definitions
+SetuHaul AgentCore — Strands Tool Definitions
 
 Production-ready tools that the Strands agent can invoke during conversation.
 Each tool is decorated with @tool and follows the Strands tool contract.
 """
 
-import logging
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from strands import tool
 
+from config import logger
 from db import (
     create_chat_thread,
     create_exception,
     check_duplicate_exception,
 )
-
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +113,7 @@ def record_driver_issue(
     dedupe_key = _build_dedupe_key(driver_id, shipment_id, now)
     existing = check_duplicate_exception(dedupe_key)
     if existing:
-        logger.info(
-            f"[tool:record_driver_issue] Duplicate detected: {dedupe_key}"
-        )
+        logger.info(f"[tool:record_driver_issue] Duplicate detected: {dedupe_key}")
         return {
             "status": "duplicate",
             "message": "This issue has already been recorded.",
@@ -143,15 +139,11 @@ def record_driver_issue(
         create_chat_thread(thread_data)
         logger.info(f"[tool:record_driver_issue] Created chat_thread: {thread_id}")
     except Exception as e:
-        # Thread may already exist for this session — log and continue
-        logger.warning(
-            f"[tool:record_driver_issue] chat_thread insert failed (may already exist): {e}"
-        )
+        logger.warning(f"[tool:record_driver_issue] chat_thread insert failed (may already exist): {e}")
 
     # --- Insert driver_exception ---
     exception_id = _generate_exception_id()
 
-    # Build description with constraints and recommended action
     full_description = issue_description
     if constraints:
         full_description += f" | Constraints: {constraints}"
@@ -177,9 +169,7 @@ def record_driver_issue(
 
     try:
         create_exception(exception_data)
-        logger.info(
-            f"[tool:record_driver_issue] Created driver_exception: {exception_id}"
-        )
+        logger.info(f"[tool:record_driver_issue] Created driver_exception: {exception_id}")
     except Exception as e:
         error_msg = f"Failed to insert driver_exception: {e}"
         logger.error(f"[tool:record_driver_issue] {error_msg}")

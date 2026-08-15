@@ -1,7 +1,19 @@
-# Number of previous turns to load from memory for context
-MAX_HISTORY_TURNS = 10
+"""
+SetuHaul AgentCore — Short-Term Memory (STM) Management
 
-# --- Memory Helpers ---
+Handles loading and persisting conversation turns using AgentCore's
+MemorySessionManager. Used by handler.py to maintain multi-turn context.
+"""
+
+from typing import List, Dict
+
+from config import config, logger
+
+
+# ---------------------------------------------------------------------------
+# Memory Helpers
+# ---------------------------------------------------------------------------
+
 
 def _get_memory_manager(memory_id: str):
     """Create a MemorySessionManager instance for the given memory_id."""
@@ -9,24 +21,25 @@ def _get_memory_manager(memory_id: str):
 
     return MemorySessionManager(
         memory_id=memory_id,
-        region_name=REGION,
+        region_name=config.aws_region,
     )
 
 
 def _load_conversation_history(memory_mgr, session_id: str) -> List[Dict]:
-    """Load previous conversation turns from short-term memory.
+    """
+    Load previous conversation turns from short-term memory.
 
     Returns a list of Strands-compatible message dicts:
         [{"role": "user", "content": [{"text": "..."}]},
          {"role": "assistant", "content": [{"text": "..."}]}, ...]
     """
-    messages = []
+    messages: List[Dict] = []
 
     try:
         turns = memory_mgr.get_last_k_turns(
-            actor_id=AGENT_NAME,
+            actor_id=config.agent_name,
             session_id=session_id,
-            k=MAX_HISTORY_TURNS,
+            k=config.max_history_turns,
         )
 
         for turn in turns:
@@ -37,7 +50,6 @@ def _load_conversation_history(memory_mgr, session_id: str) -> List[Dict]:
                 if not text:
                     continue
 
-                # Map STM roles to Strands roles
                 if role_raw == "user":
                     messages.append({"role": "user", "content": [{"text": text}]})
                 elif role_raw == "assistant":
@@ -57,7 +69,7 @@ def _persist_turn(memory_mgr, session_id: str, user_text: str, assistant_text: s
 
     try:
         memory_mgr.add_turns(
-            actor_id=AGENT_NAME,
+            actor_id=config.agent_name,
             session_id=session_id,
             messages=[
                 ConversationalMessage(text=user_text, role=MessageRole.USER),
@@ -67,4 +79,3 @@ def _persist_turn(memory_mgr, session_id: str, user_text: str, assistant_text: s
         logger.info(f"[memory] Persisted turn to STM for session {session_id}")
     except Exception as e:
         logger.error(f"[memory] Failed to persist turn: {e}")
-

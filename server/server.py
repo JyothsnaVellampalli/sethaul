@@ -13,7 +13,6 @@ import os
 import sys
 import uuid
 import logging
-import httpx
 from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
@@ -100,7 +99,7 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-    "https://*.vercel.app",
+    "https://sethaul.vercel.app",
 ]
 
 # In production, set CORS_ORIGINS env var to your Vercel domain
@@ -110,10 +109,11 @@ if cors_origins_env:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permissive for dev; restrict in prod via env
+    allow_origins=["https://sethaul.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
@@ -174,9 +174,6 @@ def _now_iso() -> str:
 def _generate_session_id() -> str:
     """Generate a unique session ID (>= 33 chars for AgentCore compat)."""
     return f"drv-{uuid.uuid4()}"
-
-
-AGENT_ENDPOINT = os.environ.get("AGENT_ENDPOINT", "http://localhost:8080/invocations")
 
 
 def _generate_message_id() -> str:
@@ -354,25 +351,13 @@ async def _invoke_agent(prompt: str, session_id: str) -> dict:
     """
     Invoke the agent running on localhost:8080 with prompt and session_id.
     """
-    payload = {"prompt": prompt, "session_id": session_id}
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(AGENT_ENDPOINT, json=payload)
-        response.raise_for_status()
-        return response.json()
+    from agent_invoker import invoke_agent
+    return await invoke_agent(prompt=prompt, session_id=session_id)
 
 
 # ---------------------------------------------------------------------------
 # Routes: Health
 # ---------------------------------------------------------------------------
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint for load balancers and monitoring."""
-    return {"status": "healthy", "service": "sethaul-driver-chat"}
-
-
-# ---------------------------------------------------------------------------
-# Routes: Driver Authentication
 # ---------------------------------------------------------------------------
 
 @app.post("/auth/login", response_model=DriverLoginResponse)
@@ -538,12 +523,6 @@ async def chat(body: ChatRequest):
             session_id=result.get("session_id", body.session_id),
         )
 
-    except httpx.HTTPStatusError as e:
-        logger.error(f"[chat] Agent returned {e.response.status_code}: {e.response.text}")
-        raise HTTPException(status_code=502, detail="Agent service error.")
-    except httpx.ConnectError:
-        logger.error("[chat] Cannot connect to agent at localhost:8080")
-        raise HTTPException(status_code=503, detail="Agent service unavailable.")
     except Exception as e:
         logger.error(f"[chat] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
