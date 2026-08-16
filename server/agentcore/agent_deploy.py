@@ -19,6 +19,19 @@ def deploy_agent():
     try:
         logger.info("⚙️ Configuring runtime")
         
+        # Environment variables for the agent runtime container.
+        agent_env_vars = {
+            "SUPABASE_URL": config.supabase_url,
+            "SUPABASE_KEY": config.supabase_key,
+            "AWS_REGION": aws_region,
+            "BEDROCK_MODEL_ID": config.model_id,
+            "MEMORY_ID": config.memory_id,
+        }
+        # Remove empty values to avoid overriding defaults
+        agent_env_vars = {k: v for k, v in agent_env_vars.items() if v}
+
+        print(f"agent_env_vars: {agent_env_vars}")
+
         try:
             runtime.configure(
                 entrypoint='handler.py',
@@ -45,7 +58,7 @@ def deploy_agent():
         logger.info(f"🚀 Launching")
         launch_res = None
         try:
-            launch_res = runtime.launch(auto_update_on_conflict=True)
+            launch_res = runtime.launch(auto_update_on_conflict=True, env_vars=agent_env_vars)
         except Exception as e:
             logger.info(f"❌ Runtime launch failed: {e}", exc_info=True)
             return
