@@ -101,6 +101,76 @@ export interface FilterOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Dock Planner Types & API
+// ---------------------------------------------------------------------------
+
+export interface DockPlannerDock {
+  dock_id: string;
+  dock_code: string;
+  dock_type: string;
+  max_vehicle_weight_kg: number;
+  supports_refrigerated: number;
+}
+
+export interface DockPlannerSlotShipment {
+  shipment_id: string;
+  order_reference: string;
+  driver_id: string;
+  customer_name: string;
+  product_category: string;
+  load_weight_kg: number;
+  required_dock_type: string;
+  priority_code: string;
+  latest_eta_ts: string;
+  current_status: string;
+  drivers: { driver_name: string; phone: string } | null;
+}
+
+export interface DockPlannerAppointment {
+  appointment_id: string;
+  shipment_id: string;
+  appointment_status: string;
+  booking_source: string;
+  shipment: DockPlannerSlotShipment | null;
+}
+
+export interface DockPlannerSlot {
+  slot_id: string;
+  dock_id: string;
+  slot_start_ts: string;
+  slot_end_ts: string;
+  slot_status: string;
+  appointment: DockPlannerAppointment | null;
+}
+
+export interface DockPlannerDaySummary {
+  total_slots: number;
+  occupied: number;
+  blocked: number;
+  available: number;
+}
+
+export interface DockPlannerData {
+  docks: DockPlannerDock[];
+  slots: DockPlannerSlot[];
+  summary: Record<string, DockPlannerDaySummary>;
+}
+
+export async function fetchDockPlanner(
+  facilityId: string,
+  startDate: string,
+  endDate: string
+): Promise<DockPlannerData> {
+  const url = new URL(`${API_BASE_URL}/admin/dock-planner`, window.location.origin);
+  url.searchParams.set("facility_id", facilityId);
+  url.searchParams.set("start_date", startDate);
+  url.searchParams.set("end_date", endDate);
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Dock planner fetch failed (${res.status})`);
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
 // API Calls
 // ---------------------------------------------------------------------------
 
@@ -124,6 +194,77 @@ export async function fetchDashboard(params?: {
 export async function fetchFilters(): Promise<FilterOptions> {
   const res = await fetch(`${API_BASE_URL}/admin/filters`);
   if (!res.ok) throw new Error(`Filters fetch failed (${res.status})`);
+  return res.json();
+}
+
+export interface ShipmentDetail {
+  shipment: {
+    shipment_id: string;
+    order_reference: string;
+    carrier_id: string;
+    driver_id: string;
+    vehicle_id: string;
+    origin_name: string;
+    origin_city: string;
+    destination_facility_id: string;
+    customer_name: string;
+    product_category: string;
+    load_weight_kg: number;
+    pallet_count: number | null;
+    required_dock_type: string;
+    temperature_control_required: number;
+    priority_code: string;
+    planned_departure_ts: string | null;
+    actual_departure_ts: string | null;
+    original_eta_ts: string;
+    latest_eta_ts: string;
+    expected_unload_min: number;
+    current_status: string;
+    created_at: string;
+  };
+  driver: { driver_id: string; driver_name: string; phone: string } | null;
+  vehicle: { vehicle_id: string; registration_number: string; vehicle_type_code: string; capacity_kg: number | null } | null;
+  facility: { facility_id: string; facility_name: string; city: string } | null;
+  carrier: { carrier_name: string; contact_phone: string } | null;
+  current_appointments: Array<{
+    appointment_id: string;
+    slot_id: string;
+    appointment_status: string;
+    booking_source: string;
+    confirmed_at: string | null;
+    booked_at: string | null;
+    appointment_slots: {
+      slot_start_ts: string;
+      slot_end_ts: string;
+      dock_id: string;
+      docks: { dock_code: string; dock_type: string } | null;
+    } | null;
+  }>;
+  eta_history: Array<{
+    eta_update_id: string;
+    source_type: string;
+    reported_by_driver_id: string | null;
+    reported_by_driver_name?: string | null;
+    declared_eta_ts: string;
+    confidence_code: string | null;
+    delay_reason_code: string | null;
+    note: string | null;
+    created_at: string;
+  }>;
+  exceptions: Array<{
+    exception_id: string;
+    exception_type: string;
+    severity_code: string;
+    exception_status: string;
+    declared_eta_ts: string | null;
+    reported_at: string;
+    description: string;
+  }>;
+}
+
+export async function fetchShipmentDetail(shipmentId: string): Promise<ShipmentDetail> {
+  const res = await fetch(`${API_BASE_URL}/admin/shipments/${shipmentId}/detail`);
+  if (!res.ok) throw new Error(`Shipment detail fetch failed (${res.status})`);
   return res.json();
 }
 

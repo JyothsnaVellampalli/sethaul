@@ -889,6 +889,132 @@ def _determine_arrival_state(shipment_id: str, gate_in_ts: str, client) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Routes: Admin — Dock Planner
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/dock-planner")
+async def admin_dock_planner(
+    facility_id: str = Query(..., description="Facility ID"),
+    start_date: str = Query(..., description="Start date YYYY-MM-DD"),
+    end_date: str = Query(..., description="End date YYYY-MM-DD"),
+):
+    """
+    Returns dock occupancy data for the planning calendar.
+
+    Returns all docks for the facility with their slots and booked appointments
+    for the given date range. Designed for a single optimized query to power
+    the day/hour grid view.
+
+    Response structure:
+    - docks: list of docks at this facility
+    - slots: all slots in the date range with status + appointment info
+    - summary: occupancy stats per day
+    """
+    from db import get_client as _gc
+
+    client = _gc()
+
+    # Validate dates
+    try:
+        from datetime import datetime as dt
+        start = dt.strptime(start_date, "%Y-%m-%d")
+        end = dt.strptime(end_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be in YYYY-MM-DD format.")
+
+    if (end - start).days > 31:
+        raise HTTPException(status_code=400, detail="Maximum range is 31 days.")
+
+    range_start = f"{start_date}T00:00:00+05:30"
+    range_end = f"{end_date}T23:59:59+05:30"
+
+    # 1. Get docks for the facility
+    docks_resp = client.table("docks").select(
+        "dock_id, dock_code, dock_type, max_vehicle_weight_kg, supports_refrigerated"
+    ).eq("facility_id", facility_id).execute()
+    docks = docks_resp.data or []
+
+    if not docks:
+        return {"docks": [], "slots": [], "summary": {}}
+
+    dock_ids = [d["dock_id"] for d in docks]
+
+    # 2. Get all slots for these docks in the date range (single query)
+    slots_resp = (
+        client.table("appointment_slots")
+        .select("slot_id, dock_id, slot_start_ts, slot_end_ts, slot_status")
+        .eq("facility_id", facility_id)
+        .gte("slot_start_ts", range_start)
+        .lte("slot_start_ts", range_end)
+        .order("slot_start_ts")
+        .execute()
+    )
+    slots = slots_resp.data or []
+
+    # 3. Get all active appointments for this facility's shipments in the range
+    # We join through appointment_slots to get slot timing + shipment info
+    appts_resp = (
+        client.table("appointments")
+        .select(
+            "appointment_id, shipment_id, slot_id, appointment_status, booking_source, "
+            "shipments:shipment_id(shipment_id, order_reference, driver_id, customer_name, "
+            "product_category, load_weight_kg, required_dock_type, priority_code, "
+            "latest_eta_ts, current_status, "
+            "drivers:driver_id(driver_name, phone))"
+        )
+        .eq("is_current", 1)
+        .in_("appointment_status", ["PENDING_CONFIRMATION", "CONFIRMED", "IN_PROGRESS"])
+        .execute()
+    )
+    all_appts = appts_resp.data or []
+
+    # Build a slot_id -> appointment map for O(1) lookups
+    slot_ids_set = {s["slot_id"] for s in slots}
+    appt_by_slot = {}
+    for appt in all_appts:
+        if appt["slot_id"] in slot_ids_set:
+            appt_by_slot[appt["slot_id"]] = appt
+
+    # 4. Enrich slots with appointment data
+    enriched_slots = []
+    for slot in slots:
+        appt = appt_by_slot.get(slot["slot_id"])
+        enriched_slots.append({
+            "slot_id": slot["slot_id"],
+            "dock_id": slot["dock_id"],
+            "slot_start_ts": slot["slot_start_ts"],
+            "slot_end_ts": slot["slot_end_ts"],
+            "slot_status": slot["slot_status"],
+            "appointment": {
+                "appointment_id": appt["appointment_id"],
+                "shipment_id": appt["shipment_id"],
+                "appointment_status": appt["appointment_status"],
+                "booking_source": appt["booking_source"],
+                "shipment": appt.get("shipments"),
+            } if appt else None,
+        })
+
+    # 5. Compute per-day summary
+    from collections import defaultdict
+    daily_summary: dict = defaultdict(lambda: {"total_slots": 0, "occupied": 0, "blocked": 0, "available": 0})
+    for slot in enriched_slots:
+        day = slot["slot_start_ts"][:10]
+        daily_summary[day]["total_slots"] += 1
+        if slot["appointment"]:
+            daily_summary[day]["occupied"] += 1
+        elif slot["slot_status"] == "BLOCKED":
+            daily_summary[day]["blocked"] += 1
+        else:
+            daily_summary[day]["available"] += 1
+
+    return {
+        "docks": docks,
+        "slots": enriched_slots,
+        "summary": dict(daily_summary),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Routes: Admin — Dashboard
 # ---------------------------------------------------------------------------
 
@@ -985,6 +1111,8 @@ async def admin_dashboard(
 @app.get("/admin/exceptions/{exception_id}")
 async def admin_exception_detail(exception_id: str):
     """Get full details of a specific exception including shipment and slot data."""
+    from db import get_client as _gc
+
     exception = get_exception(exception_id)
     if not exception:
         raise HTTPException(status_code=404, detail="Exception not found.")
@@ -995,10 +1123,18 @@ async def admin_exception_detail(exception_id: str):
     latest_eta = get_latest_eta(shipment_id) if shipment_id else None
     current_appt = get_current_appointment(shipment_id) if shipment_id else None
 
+    # Carrier info
+    carrier = None
+    if driver and driver.get("carrier_id"):
+        client = _gc()
+        carrier_resp = client.table("carriers").select("carrier_id, carrier_name, contact_phone").eq("carrier_id", driver["carrier_id"]).limit(1).execute()
+        carrier = carrier_resp.data[0] if carrier_resp.data else None
+
     return {
         "exception": exception,
         "shipment": shipment,
         "driver": driver,
+        "carrier": carrier,
         "latest_eta": latest_eta,
         "current_appointment": current_appt,
     }
@@ -1443,6 +1579,88 @@ async def admin_eta_override(shipment_id: str, body: EtaOverrideRequest):
         "appointment_id": new_appt_id,
         "slot_id": body.slot_id,
         "new_eta": new_eta,
+    }
+
+
+@app.get("/admin/shipments/{shipment_id}/detail")
+async def admin_get_shipment_detail(shipment_id: str):
+    """
+    Get full shipment details for the admin popup including:
+    - Shipment core data (origin, destination, product, weight, status)
+    - Driver and vehicle info
+    - Current appointment slot details
+    - Full ETA update history with source attribution
+    - Active exceptions
+    """
+    from db import get_client as _gc, get_eta_history, get_exceptions_by_shipment
+
+    shipment = get_shipment(shipment_id)
+    if not shipment:
+        raise HTTPException(status_code=404, detail="Shipment not found.")
+
+    client = _gc()
+
+    # Driver info
+    driver = get_driver(shipment["driver_id"]) if shipment.get("driver_id") else None
+
+    # Vehicle info
+    vehicle = get_vehicle(shipment["vehicle_id"]) if shipment.get("vehicle_id") else None
+
+    # Facility info
+    facility = get_facility(shipment["destination_facility_id"]) if shipment.get("destination_facility_id") else None
+
+    # Carrier info
+    carrier = None
+    if shipment.get("carrier_id"):
+        carrier_resp = client.table("carriers").select("carrier_name, contact_phone").eq("carrier_id", shipment["carrier_id"]).limit(1).execute()
+        carrier = carrier_resp.data[0] if carrier_resp.data else None
+
+    # Current appointment with slot details
+    appt_resp = (
+        client.table("appointments")
+        .select("appointment_id, slot_id, appointment_status, booking_source, confirmed_at, booked_at, appointment_slots:slot_id(slot_start_ts, slot_end_ts, dock_id, docks:dock_id(dock_code, dock_type))")
+        .eq("shipment_id", shipment_id)
+        .eq("is_current", 1)
+        .in_("appointment_status", ["PENDING_CONFIRMATION", "CONFIRMED", "IN_PROGRESS"])
+        .order("booked_at", desc=True)
+        .execute()
+    )
+    current_appointments = appt_resp.data or []
+
+    # ETA update history (newest first) — shows who changed ETA and why
+    eta_history = get_eta_history(shipment_id)
+
+    # Enrich ETA history with driver name for DRIVER_DECLARED entries
+    for eta in eta_history:
+        if eta.get("source_type") == "DRIVER_DECLARED" and eta.get("reported_by_driver_id"):
+            eta_driver = get_driver(eta["reported_by_driver_id"])
+            eta["reported_by_driver_name"] = eta_driver["driver_name"] if eta_driver else None
+
+    # Active exceptions for this shipment
+    exceptions = get_exceptions_by_shipment(shipment_id)
+
+    return {
+        "shipment": shipment,
+        "driver": {
+            "driver_id": driver["driver_id"],
+            "driver_name": driver["driver_name"],
+            "phone": driver["phone"],
+        } if driver else None,
+        "vehicle": {
+            "vehicle_id": vehicle["vehicle_id"],
+            "registration_number": vehicle["registration_number"],
+            "vehicle_type_code": vehicle["vehicle_type_code"],
+            "capacity_kg": vehicle.get("capacity_kg"),
+        } if vehicle else None,
+        "facility": {
+            "facility_id": facility["facility_id"],
+            "facility_name": facility["facility_name"],
+            "city": facility["city"],
+        } if facility else None,
+        "carrier": carrier,
+        "current_appointments": current_appointments,
+        "eta_history": eta_history,
+        "exceptions": exceptions,
     }
 
 

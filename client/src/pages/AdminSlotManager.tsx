@@ -178,7 +178,7 @@ function AdminSlotManager() {
       {success && <div className="admin__success">{success}</div>}
 
       {/* Generate Slots — hidden by default, keep functionality */}
-      <div className="detail__card" style={{ marginBottom: 20, display: "none" }}>
+      <div className="detail__card" >
         <h3>Generate Weekly Slots</h3>
         <div className="shipment-form__grid" style={{ marginTop: 12 }}>
           <div className="form-field">

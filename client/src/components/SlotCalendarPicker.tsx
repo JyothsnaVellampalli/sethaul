@@ -299,7 +299,7 @@ function fmtHour(iso: string): string {
   try {
     const d = new Date(iso);
     const h = d.getHours();
-    return h < 12 ? `${h || 12}a` : `${h === 12 ? 12 : h - 12}p`;
+    return h < 12 ? `${h || 12}AM` : `${h === 12 ? 12 : h - 12}PM`;
   } catch { return ""; }
 }
 

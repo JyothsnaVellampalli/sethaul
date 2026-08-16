@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import SlotCalendarPicker from "../components/SlotCalendarPicker";
+import ShipmentDetailPopup from "../components/ShipmentDetailPopup";
 import {
   fetchDashboard,
   fetchFilters,
@@ -12,11 +13,16 @@ import {
   type AvailableSlot,
 } from "../services/adminApi";
 
+// Lazy load DockPlannerTab — only fetched when tab is active
+const DockPlannerTab = lazy(() => import("../components/DockPlannerTab"));
+
+type TabKey = "planner" | "exceptions" | "shipments";
+
 function AdminDashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
   const [filters, setFilters] = useState<FilterOptions | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Filter state
@@ -24,7 +30,10 @@ function AdminDashboard() {
   const [statusFilter, setStatusFilter] = useState("");
   const [driverFilter, setDriverFilter] = useState("");
   const [exceptionTypeFilter, setExceptionTypeFilter] = useState("");
-  const [activeTab, setActiveTab] = useState<"exceptions" | "shipments">("exceptions");
+  const [activeTab, setActiveTab] = useState<TabKey>("planner");
+
+  // Track if data tabs have been loaded at least once (lazy load)
+  const [dataTabLoaded, setDataTabLoaded] = useState(false);
 
   // Modal state
   const [etaOverride, setEtaOverride] = useState<{
@@ -36,35 +45,61 @@ function AdminDashboard() {
     productCategory: string;
   } | null>(null);
   const [driverPopup, setDriverPopup] = useState<string | null>(null);
+  const [shipmentPopup, setShipmentPopup] = useState<string | null>(null);
 
+  // Load filters eagerly (small payload, needed by planner tab too)
+  useEffect(() => {
+    fetchFilters()
+      .then(setFilters)
+      .catch(() => {});
+  }, []);
+
+  // Load dashboard data only when exceptions/shipments tab is active (lazy)
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [dashData, filterData] = await Promise.all([
-        fetchDashboard({
-          facility_id: facilityFilter || undefined,
-          status: statusFilter || undefined,
-          driver_id: driverFilter || undefined,
-          exception_type: exceptionTypeFilter || undefined,
-        }),
-        filters ? Promise.resolve(filters) : fetchFilters(),
-      ]);
+      const dashData = await fetchDashboard({
+        facility_id: facilityFilter || undefined,
+        status: statusFilter || undefined,
+        driver_id: driverFilter || undefined,
+        exception_type: exceptionTypeFilter || undefined,
+      });
       setData(dashData);
-      if (!filters) setFilters(filterData);
+      setDataTabLoaded(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
       setLoading(false);
     }
-  }, [facilityFilter, statusFilter, driverFilter, exceptionTypeFilter, filters]);
+  }, [facilityFilter, statusFilter, driverFilter, exceptionTypeFilter]);
 
+  // Trigger data load when switching to exceptions/shipments tab
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (activeTab === "exceptions" || activeTab === "shipments") {
+      if (!dataTabLoaded) {
+        loadData();
+      }
+    }
+  }, [activeTab, dataTabLoaded, loadData]);
+
+  // Reload when filters change (only if data tab has been loaded)
+  useEffect(() => {
+    if (dataTabLoaded && (activeTab === "exceptions" || activeTab === "shipments")) {
+      loadData();
+    }
+  }, [facilityFilter, statusFilter, driverFilter, exceptionTypeFilter]);
 
   const handleExceptionClick = (exceptionId: string) => {
     navigate(`/admin/exceptions/${exceptionId}`);
+  };
+
+  const handleRefresh = () => {
+    if (activeTab === "planner") {
+      // Planner handles its own refresh internally
+      return;
+    }
+    loadData();
   };
 
   return (
@@ -78,16 +113,18 @@ function AdminDashboard() {
           <button className="admin__action-btn" onClick={() => navigate("/admin/shipments/new")}>
             + New Shipment
           </button>
-          <button className="admin__refresh" onClick={loadData} disabled={loading}>
-            {loading ? "Loading..." : "Refresh"}
-          </button>
+          {activeTab !== "planner" && (
+            <button className="admin__refresh" onClick={handleRefresh} disabled={loading}>
+              {loading ? "Loading..." : "Refresh"}
+            </button>
+          )}
         </div>
       </header>
 
       {error && <div className="admin__error">{error}</div>}
 
-      {/* Summary Cards */}
-      {data && (
+      {/* Summary Cards — show when data is available */}
+      {data && (activeTab === "exceptions" || activeTab === "shipments") && (
         <div className="admin__summary">
           <div className="summary-card">
             <span className="summary-card__value">{data.summary.total_shipments}</span>
@@ -106,8 +143,8 @@ function AdminDashboard() {
         </div>
       )}
 
-      {/* Filters */}
-      {filters && (
+      {/* Filters — show only for exceptions/shipments tabs */}
+      {filters && (activeTab === "exceptions" || activeTab === "shipments") && (
         <div className="admin__filters">
           <select value={facilityFilter} onChange={(e) => setFacilityFilter(e.target.value)}>
             <option value="">All Facilities</option>
@@ -146,135 +183,171 @@ function AdminDashboard() {
       {/* Tab Selector */}
       <div className="admin__tabs">
         <button
+          className={`admin__tab ${activeTab === "planner" ? "admin__tab--active" : ""}`}
+          onClick={() => setActiveTab("planner")}
+        >
+          Dock Planner
+        </button>
+        <button
           className={`admin__tab ${activeTab === "exceptions" ? "admin__tab--active" : ""}`}
           onClick={() => setActiveTab("exceptions")}
         >
-          Driver Exceptions ({data?.exceptions.length || 0})
+          Exceptions {data ? `(${data.exceptions.length})` : ""}
         </button>
         <button
           className={`admin__tab ${activeTab === "shipments" ? "admin__tab--active" : ""}`}
           onClick={() => setActiveTab("shipments")}
         >
-          Shipments ({data?.shipments.length || 0})
+          Shipments {data ? `(${data.shipments.length})` : ""}
         </button>
       </div>
 
+      {/* Dock Planner Tab */}
+      {activeTab === "planner" && filters && (
+        <Suspense fallback={<div className="dock-planner__loading">Loading Dock Planner...</div>}>
+          <DockPlannerTab
+            facilities={filters.facilities}
+            defaultFacilityId={facilityFilter || undefined}
+          />
+        </Suspense>
+      )}
+
       {/* Exceptions Table */}
-      {activeTab === "exceptions" && data && (
-        <div className="admin__table-wrapper">
-          <table className="admin__table">
-            <thead>
-              <tr>
-                <th>Severity</th>
-                <th>Driver</th>
-                <th>Shipment</th>
-                <th>Type</th>
-                <th>Declared ETA</th>
-                <th>Delay (min)</th>
-                <th>Status</th>
-                <th>Reported</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.exceptions.length === 0 && (
-                <tr><td colSpan={9} className="admin__empty">No active exceptions</td></tr>
-              )}
-              {data.exceptions.map((exc: ExceptionRow) => (
-                <tr key={exc.exception_id} className={`admin__row admin__row--${exc.severity_code.toLowerCase()}`}>
-                  <td>
-                    <span className={`badge badge--${exc.severity_code.toLowerCase()}`}>
-                      {exc.severity_code}
-                    </span>
-                  </td>
-                  <td>{exc.drivers?.driver_name || exc.driver_id}</td>
-                  <td>{exc.shipment_id || "—"}</td>
-                  <td>{exc.exception_type}</td>
-                  <td>{exc.declared_eta_ts ? formatTime(exc.declared_eta_ts) : "—"}</td>
-                  <td>{exc.reported_delay_min ?? "—"}</td>
-                  <td>
-                    <span className="badge badge--status">{exc.exception_status}</span>
-                  </td>
-                  <td>{formatTime(exc.reported_at)}</td>
-                  <td>
-                    <button
-                      className="admin__action-btn"
-                      onClick={() => handleExceptionClick(exc.exception_id)}
-                    >
-                      Review
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {activeTab === "exceptions" && (
+        <>
+          {loading && <div className="dock-planner__loading">Loading exceptions...</div>}
+          {!loading && data && (
+            <div className="admin__table-wrapper">
+              <table className="admin__table">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Driver</th>
+                    <th>Shipment</th>
+                    <th>Type</th>
+                    <th>Declared ETA</th>
+                    <th>Delay (min)</th>
+                    <th>Status</th>
+                    <th>Reported</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.exceptions.length === 0 && (
+                    <tr><td colSpan={9} className="admin__empty">No active exceptions</td></tr>
+                  )}
+                  {data.exceptions.map((exc: ExceptionRow) => (
+                    <tr key={exc.exception_id} className={`admin__row admin__row--${exc.severity_code.toLowerCase()}`}>
+                      <td>
+                        <span className={`badge badge--${exc.severity_code.toLowerCase()}`}>
+                          {exc.severity_code}
+                        </span>
+                      </td>
+                      <td>{exc.drivers?.driver_name || exc.driver_id}</td>
+                      <td>
+                        {exc.shipment_id ? (
+                          <button className="admin__link-btn" onClick={() => setShipmentPopup(exc.shipment_id!)}>
+                            {exc.shipment_id}
+                          </button>
+                        ) : "—"}
+                      </td>
+                      <td>{exc.exception_type}</td>
+                      <td>{exc.declared_eta_ts ? formatTime(exc.declared_eta_ts) : "—"}</td>
+                      <td>{exc.reported_delay_min ?? "—"}</td>
+                      <td>
+                        <span className="badge badge--status">{exc.exception_status}</span>
+                      </td>
+                      <td>{formatTime(exc.reported_at)}</td>
+                      <td>
+                        <button
+                          className="admin__action-btn"
+                          onClick={() => handleExceptionClick(exc.exception_id)}
+                        >
+                          Review
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* Shipments Table */}
-      {activeTab === "shipments" && data && (
-        <div className="admin__table-wrapper">
-          <table className="admin__table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Driver</th>
-                <th>Facility</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Dock Type</th>
-                <th>Original ETA</th>
-                <th>Latest ETA</th>
-                <th>Weight (kg)</th>
-                <th>Product</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.shipments.length === 0 && (
-                <tr><td colSpan={10} className="admin__empty">No shipments found</td></tr>
-              )}
-              {data.shipments.map((s: ShipmentRow) => (
-                <tr key={s.shipment_id} className={`admin__row admin__row--status-${s.current_status.toLowerCase()}`}>
-                  <td className="admin__mono">{s.shipment_id}</td>
-                  <td>
-                    <button className="admin__link-btn" onClick={() => setDriverPopup(s.driver_id)}>
-                      {s.drivers?.driver_name || s.driver_id}
-                    </button>
-                  </td>
-                  <td>{s.facilities?.facility_name || s.destination_facility_id}</td>
-                  <td>
-                    <StatusDropdown
-                      shipmentId={s.shipment_id}
-                      currentStatus={s.current_status}
-                      onStatusChange={loadData}
-                    />
-                  </td>
-                  <td>
-                    <span className={`badge badge--${s.priority_code.toLowerCase()}`}>
-                      {s.priority_code}
-                    </span>
-                  </td>
-                  <td>{s.required_dock_type}</td>
-                  <td>{formatTime(s.original_eta_ts)}</td>
-                  <td>
-                    <span className="eta-cell">
-                      {formatTime(s.latest_eta_ts)}
-                      <button
-                        className="eta-edit-btn"
-                        title="Override ETA"
-                        onClick={() => setEtaOverride({ shipmentId: s.shipment_id, facilityId: s.destination_facility_id, dockType: s.required_dock_type, currentEta: s.latest_eta_ts, customerName: s.customer_name, productCategory: s.product_category })}
-                      >
-                        ✎
-                      </button>
-                    </span>
-                  </td>
-                  <td>{s.load_weight_kg.toLocaleString()}</td>
-                  <td>{s.product_category}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {activeTab === "shipments" && (
+        <>
+          {loading && <div className="dock-planner__loading">Loading shipments...</div>}
+          {!loading && data && (
+            <div className="admin__table-wrapper">
+              <table className="admin__table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Driver</th>
+                    <th>Facility</th>
+                    <th>Status</th>
+                    <th>Priority</th>
+                    <th>Dock Type</th>
+                    <th>Original ETA</th>
+                    <th>Latest ETA</th>
+                    <th>Weight (kg)</th>
+                    <th>Product</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.shipments.length === 0 && (
+                    <tr><td colSpan={10} className="admin__empty">No shipments found</td></tr>
+                  )}
+                  {data.shipments.map((s: ShipmentRow) => (
+                    <tr key={s.shipment_id} className={`admin__row admin__row--status-${s.current_status.toLowerCase()}`}>
+                      <td className="admin__mono">
+                        <button className="admin__link-btn" onClick={() => setShipmentPopup(s.shipment_id)}>
+                          {s.shipment_id}
+                        </button>
+                      </td>
+                      <td>
+                        <button className="admin__link-btn" onClick={() => setDriverPopup(s.driver_id)}>
+                          {s.drivers?.driver_name || s.driver_id}
+                        </button>
+                      </td>
+                      <td>{s.facilities?.facility_name || s.destination_facility_id}</td>
+                      <td>
+                        <StatusDropdown
+                          shipmentId={s.shipment_id}
+                          currentStatus={s.current_status}
+                          onStatusChange={loadData}
+                        />
+                      </td>
+                      <td>
+                        <span className={`badge badge--${s.priority_code.toLowerCase()}`}>
+                          {s.priority_code}
+                        </span>
+                      </td>
+                      <td>{s.required_dock_type}</td>
+                      <td>{formatTime(s.original_eta_ts)}</td>
+                      <td>
+                        <span className="eta-cell">
+                          {formatTime(s.latest_eta_ts)}
+                          <button
+                            className="eta-edit-btn"
+                            title="Override ETA"
+                            onClick={() => setEtaOverride({ shipmentId: s.shipment_id, facilityId: s.destination_facility_id, dockType: s.required_dock_type, currentEta: s.latest_eta_ts, customerName: s.customer_name, productCategory: s.product_category })}
+                          >
+                            ✎
+                          </button>
+                        </span>
+                      </td>
+                      <td>{s.load_weight_kg.toLocaleString()}</td>
+                      <td>{s.product_category}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {/* ETA Override Modal */}
@@ -296,6 +369,14 @@ function AdminDashboard() {
         <DriverInfoPopup
           driverId={driverPopup}
           onClose={() => setDriverPopup(null)}
+        />
+      )}
+
+      {/* Shipment Detail Popup */}
+      {shipmentPopup && (
+        <ShipmentDetailPopup
+          shipmentId={shipmentPopup}
+          onClose={() => setShipmentPopup(null)}
         />
       )}
     </div>

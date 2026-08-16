@@ -95,6 +95,7 @@ function AdminExceptionDetail() {
   const exc = detail?.exception as Record<string, unknown> | undefined;
   const shipment = detail?.shipment as Record<string, unknown> | undefined;
   const driver = detail?.driver as Record<string, unknown> | undefined;
+  const carrier = detail?.carrier as Record<string, unknown> | undefined;
 
   return (
     <div className="admin">
@@ -136,6 +137,12 @@ function AdminExceptionDetail() {
                 <dt>Name</dt><dd>{driver.driver_name as string}</dd>
                 <dt>ID</dt><dd>{driver.driver_id as string}</dd>
                 <dt>Phone</dt><dd>{driver.phone as string}</dd>
+                {carrier && (
+                  <>
+                    <dt>Carrier</dt><dd>{carrier.carrier_name as string}</dd>
+                    <dt>Carrier Phone</dt><dd>{carrier.contact_phone as string || "—"}</dd>
+                  </>
+                )}
               </dl>
             </div>
           )}
