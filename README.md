@@ -91,6 +91,7 @@ The first tab an admin sees on entering the dashboard — a visual planning tool
 - **Framework:** Strands Agents with `@tool` decorators
 - **Memory:** Short-Term Memory (STM) via AgentCore MemorySessionManager
 - **Tool:** `record_driver_issue` — extracts and persists driver exceptions to DB
+- **Input Validation:** Pydantic models define explicit JSON Schema for tool inputs — enum constraints on `issue_type` and `severity`, typed fields, and descriptions passed via `@tool(inputSchema=Model.model_json_schema())`
 - **Deployment:** Containerized on AgentCore Runtime with VPC networking
 - **Invocation:** `invoke_agent_runtime` via boto3 from the FastAPI server
 
@@ -134,7 +135,7 @@ CLOSED → shipment completed or cancelled
 |-------|-----------|
 | Frontend | React 18, TypeScript, Vite, React Router |
 | Backend API | Python, FastAPI, Uvicorn |
-| AI Agent | Strands Agents, Claude Sonnet 4, AWS Bedrock |
+| AI Agent | Strands Agents, Claude Sonnet 4, AWS Bedrock, Pydantic |
 | Agent Runtime | AWS Bedrock AgentCore (HTTP protocol, STM memory) |
 | Database | Supabase (PostgreSQL) |
 | Deployment | Vercel (frontend + backend), AgentCore (agent) |
@@ -302,6 +303,37 @@ AGENT_ARN=arn:aws:bedrock-agentcore:us-east-1:123456:runtime/agent-id
 ```
 
 No code changes needed to switch between modes.
+
+---
+
+## Tool Input Schema (Pydantic Validation)
+
+Agent tools use **Pydantic v2 models** to define explicit input schemas that get passed to the LLM as JSON Schema. This gives the model structured constraints on what values are acceptable.
+
+```python
+# server/agentcore/tools.py
+
+class RecordDriverIssueInput(BaseModel):
+    shipment_id: str = Field(..., description="The shipment ID (e.g. SHP1014)")
+    issue_type: Literal["DELAY", "BREAKDOWN", "TRAFFIC", "WEATHER",
+                        "EARLY_ARRIVAL", "DOCK_UNAVAILABLE", "UNKNOWN"] = Field(...)
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(...)
+    delay_minutes: int = Field(..., description="Minutes late vs original plan")
+    constraints: Optional[str] = Field(None, description="Optional constraints")
+    # ... other fields
+
+@tool(inputSchema=RecordDriverIssueInput.model_json_schema())
+def record_driver_issue(...) -> dict:
+    ...
+```
+
+**What `model_json_schema()` does:** Converts the Pydantic model into a standard JSON Schema dict that the Strands `@tool` decorator sends to Claude as the tool specification. The LLM sees enum values, types, required fields, and descriptions — producing more accurate tool calls with fewer hallucinated values.
+
+**Benefits over docstring-only inference:**
+- `Literal` types become `enum` arrays — model only generates valid values
+- `Optional[str]` with `None` default — model knows it can omit the field
+- `int` type enforcement — model won't pass `"45"` as a string
+- Field descriptions appear in the schema alongside type info
 
 ---
 

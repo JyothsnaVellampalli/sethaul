@@ -3,12 +3,16 @@ SetuHaul AgentCore — Strands Tool Definitions
 
 Production-ready tools that the Strands agent can invoke during conversation.
 Each tool is decorated with @tool and follows the Strands tool contract.
+
+Input schemas are defined as Pydantic models for explicit type validation
+and passed to the @tool decorator via inputSchema.
 """
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
+from pydantic import BaseModel, Field
 from strands import tool
 
 from config import logger
@@ -17,6 +21,67 @@ from db import (
     create_exception,
     check_duplicate_exception,
 )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic Input Schema
+# ---------------------------------------------------------------------------
+
+
+class RecordDriverIssueInput(BaseModel):
+    """Input schema for the record_driver_issue tool."""
+
+    shipment_id: str = Field(
+        ...,
+        description="The shipment ID affected (e.g. SHP1014). Always starts with SHP.",
+    )
+    driver_id: str = Field(
+        ...,
+        description="The reporting driver's ID (e.g. DRV014). Always starts with DRV.",
+    )
+    vehicle_id: str = Field(
+        ...,
+        description="The vehicle ID (e.g. VEH014). Always starts with VEH.",
+    )
+    issue_type: Literal[
+        "DELAY", "BREAKDOWN", "TRAFFIC", "WEATHER",
+        "EARLY_ARRIVAL", "DOCK_UNAVAILABLE", "UNKNOWN"
+    ] = Field(
+        ...,
+        description="Category of the reported issue.",
+    )
+    issue_description: str = Field(
+        ...,
+        description="Brief plain-English summary of the problem reported by the driver.",
+    )
+    estimated_arrival: str = Field(
+        ...,
+        description="Driver's declared ETA in ISO-8601 format with timezone (e.g. 2026-08-04T11:25:00+05:30).",
+    )
+    delay_minutes: int = Field(
+        ...,
+        description="How many minutes late versus the original plan. Use 0 for early arrival.",
+    )
+    destination_facility_id: str = Field(
+        ...,
+        description="The destination facility ID (e.g. FAC-JAI-01).",
+    )
+    severity: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(
+        ...,
+        description="Severity level based on delay duration, priority, and dock constraints.",
+    )
+    session_id: str = Field(
+        ...,
+        description="The current conversation session ID (used as thread_id).",
+    )
+    constraints: Optional[str] = Field(
+        None,
+        description="Optional constraints (e.g. must leave by 1:30 PM, reefer required).",
+    )
+    recommended_action: Optional[str] = Field(
+        None,
+        description="Optional suggested next step for the operations team.",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +135,7 @@ def _map_issue_to_intent(issue_type: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@tool
+@tool(inputSchema=RecordDriverIssueInput.model_json_schema())
 def record_driver_issue(
     shipment_id: str,
     driver_id: str,
