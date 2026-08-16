@@ -4,6 +4,19 @@ An end-to-end freight dock scheduling and driver assistance system built on **AW
 
 ---
 
+## Live Deployment
+
+| Service | URL | Platform |
+|---------|-----|----------|
+| Frontend (React SPA) | [sethaul.vercel.app](https://sethaul.vercel.app) | Vercel |
+| Backend API (FastAPI) | Vercel Serverless Functions | Vercel |
+| AI Agent Runtime | AWS Bedrock AgentCore | AWS |
+| Database | Supabase (PostgreSQL) | Supabase Cloud |
+
+Both frontend and backend are deployed on **Vercel** for low-latency, zero-config deployments with automatic HTTPS and global CDN.
+
+---
+
 ## What It Does
 
 **For Drivers:**
@@ -13,56 +26,71 @@ An end-to-end freight dock scheduling and driver assistance system built on **AW
 - Resume conversations across sessions with full message history
 
 **For Operations:**
+- **Dock Planner** — visual calendar showing dock occupancy by hour, day, week, or month
 - Dashboard showing all shipments, statuses, and driver-reported exceptions
 - AI-scored slot suggestions ranked by time proximity, priority, and dock compatibility
 - Calendar view for slot assignment with multi-slot selection (1-3 consecutive)
 - One-click ETA override with full audit trail
 - Status management with automatic facility check-in tracking
+- Full shipment detail popup with ETA change history and attribution
 
 ---
 
 ## Architecture
 
 ```
-                    Vercel                          Railway / Local
-               ┌────────────────┐            ┌──────────────────────────┐
-               │   React SPA    │───HTTPS───▶│   FastAPI (server.py)    │
-               │                │            │   Port 8000              │
-               │  /driver chat  │            │                          │
-               │  /admin dash   │            │   ┌──────────────────┐   │
-               └────────────────┘            │   │ agent_invoker.py │   │
-                                             │   └────────┬─────────┘   │
-                                             └────────────│─────────────┘
-                                                          │
-                              ┌────────────────────────────┼──────────────┐
-                              │                            ▼              │
-                              │         AWS Bedrock AgentCore Runtime     │
-                              │     ┌──────────────────────────────┐     │
-                              │     │  handler.py (Strands Agent)   │     │
-                              │     │  + tools.py (record_issue)    │     │
-                              │     │  + memory.py (STM)            │     │
-                              │     │  + config.py (centralized)    │     │
-                              │     └──────────────┬───────────────┘     │
-                              │                    │                      │
-                              └────────────────────│──────────────────────┘
-                                                   │
-                                                   ▼
-                                            ┌─────────────┐
-                                            │  Supabase   │
-                                            │  (Postgres) │
-                                            └─────────────┘
+                    Vercel                              Vercel Serverless
+               ┌────────────────┐            ┌──────────────────────────────┐
+               │   React SPA    │───HTTPS───▶│   FastAPI (api/index.py)     │
+               │   Vite + TS    │            │   @vercel/python runtime     │
+               │                │            │                              │
+               │  /             │            │   ┌────────────────────────┐ │
+               │  /admin        │            │   │  server.py (routes)    │ │
+               │  /admin/...    │            │   │  db.py (Supabase ORM)  │ │
+               └────────────────┘            │   │  agent_invoker.py      │ │
+                                             │   └──────────┬─────────────┘ │
+                                             └──────────────│───────────────┘
+                                                            │
+                              ┌──────────────────────────────┼────────────────┐
+                              │                              ▼                │
+                              │         AWS Bedrock AgentCore Runtime         │
+                              │     ┌──────────────────────────────────┐     │
+                              │     │  handler.py (Strands Agent)       │     │
+                              │     │  + tools.py (record_issue)        │     │
+                              │     │  + memory.py (STM)                │     │
+                              │     │  + config.py (centralized)        │     │
+                              │     └──────────────────┬───────────────┘     │
+                              │                        │                      │
+                              └────────────────────────│──────────────────────┘
+                                                       │
+                                                       ▼
+                                                ┌─────────────┐
+                                                │  Supabase   │
+                                                │  (Postgres) │
+                                                └─────────────┘
 ```
 
 ---
 
 ## Key Features
 
+### Dock Planner (Operations Planning View)
+
+The first tab an admin sees on entering the dashboard — a visual planning tool to understand dock traffic at a glance.
+
+- **Day view** — dock rows x 24 hour columns, color-coded cells (green=available, blue=occupied, red=blocked, grey=closed)
+- **Week view** — compact 7-day view with mini occupancy bars per dock per day
+- **Month view** — calendar grid with utilization percentages per day (click to drill into day view)
+- **Filters** — toggle individual docks, filter by type (STANDARD/REEFER/HEAVY), show/hide shipment info
+- **Summary strip** — total slots, occupied, available, blocked, utilization %
+- **Slot popup** — click any cell to see dock details, appointment info, and full shipment context (driver name, customer, weight, priority, ETA)
+
 ### Agent (AWS Bedrock AgentCore)
 
 - **Model:** Claude Sonnet 4 on Amazon Bedrock
 - **Framework:** Strands Agents with `@tool` decorators
-- **Memory:** Short-Term Memory (STM) via AgentCore MemorySessionManager — maintains conversation context across invocations
-- **Tool:** `record_driver_issue` — extracts and persists driver exceptions to the database
+- **Memory:** Short-Term Memory (STM) via AgentCore MemorySessionManager
+- **Tool:** `record_driver_issue` — extracts and persists driver exceptions to DB
 - **Deployment:** Containerized on AgentCore Runtime with VPC networking
 - **Invocation:** `invoke_agent_runtime` via boto3 from the FastAPI server
 
@@ -78,15 +106,17 @@ An end-to-end freight dock scheduling and driver assistance system built on **AW
 
 ### Admin Dashboard
 
-- **Shipments table** with inline status dropdown (triggers facility check-in state machine)
-- **Exceptions table** showing driver-reported issues with severity, delay, and declared ETA
-- **Slot suggestions** — AI-scored available slots ranked by fitness (proximity to ETA, priority, weight headroom)
-- **Calendar slot picker** — visual grid organized by dock and hour, color-coded (available/blocked/before-ETA/selected)
-- **Multi-slot selection** — supports 1-3 consecutive slots for heavy or long-duration loads
-- **ETA override modal** — operations person can reassign slots with a reason (recorded as `OPERATIONS_OVERRIDE` in `eta_updates`)
+- **Dock Planner tab** (default) — visual dock occupancy calendar with day/week/month views
+- **Exceptions tab** — driver-reported issues with severity, delay, declared ETA, and review actions
+- **Shipments tab** — all shipments with inline status dropdown, ETA override, and clickable details
+- **Shipment detail popup** — click any shipment ID to see origin/destination, product, driver/vehicle, appointment slot (time, dock, status), and full ETA update history with attribution (driver vs operations vs system)
 - **Driver info popup** — click any driver name to see phone, carrier, licence, home city
+- **Slot suggestions** — AI-scored available slots ranked by fitness (proximity to ETA, priority, weight headroom)
+- **Calendar slot picker** — visual grid organized by dock and hour, multi-slot selection (1-3 consecutive)
+- **ETA override modal** — reassign slots with reason (tracked as `OPERATIONS_OVERRIDE`)
 - **Slot management** — generate weekly slots, block/unblock individual or bulk slots
-- **Shipment creation** — form with cascading dropdowns (carrier → drivers/vehicles) and automatic appointment + ETA record creation
+- **Shipment creation** — form with cascading dropdowns and automatic appointment + ETA record creation
+- **Lazy loading** — dock planner is code-split; dashboard data only loads when switching to those tabs
 
 ### Thread Status Lifecycle
 
@@ -107,7 +137,7 @@ CLOSED → shipment completed or cancelled
 | AI Agent | Strands Agents, Claude Sonnet 4, AWS Bedrock |
 | Agent Runtime | AWS Bedrock AgentCore (HTTP protocol, STM memory) |
 | Database | Supabase (PostgreSQL) |
-| Deployment | Vercel (frontend), Railway (backend), AgentCore (agent) |
+| Deployment | Vercel (frontend + backend), AgentCore (agent) |
 
 ---
 
@@ -117,19 +147,24 @@ CLOSED → shipment completed or cancelled
 Sethaul/
 ├── client/                      # React frontend (Vercel)
 │   ├── src/
-│   │   ├── components/          # ChatScreen, LoginScreen, SlotCalendarPicker, ...
-│   │   ├── pages/               # AdminDashboard, AdminExceptionDetail, AdminCreateShipment, AdminSlotManager
-│   │   ├── services/            # api.ts, adminApi.ts
-│   │   └── styles/              # index.css
-│   ├── vercel.json
+│   │   ├── components/          # ChatScreen, DockPlannerTab, SlotCalendarPicker,
+│   │   │                        # ShipmentDetailPopup, DriverShipmentPanel, ...
+│   │   ├── pages/               # AdminDashboard, AdminExceptionDetail,
+│   │   │                        # AdminCreateShipment, AdminSlotManager
+│   │   ├── services/            # api.ts, adminApi.ts, session.ts
+│   │   ├── styles/              # index.css
+│   │   └── types/               # chat.ts
+│   ├── vercel.json              # SPA routing config
 │   └── package.json
 │
-├── server/                      # FastAPI backend (Railway)
-│   ├── server.py                # Main API server (port 8000)
+├── server/                      # FastAPI backend (Vercel Serverless)
+│   ├── api/
+│   │   └── index.py             # Vercel entry point (imports FastAPI app)
+│   ├── server.py                # Main API server — all routes
 │   ├── agent_invoker.py         # Invokes agent via AgentCore or HTTP
 │   ├── db.py                    # Full Supabase operations layer
-│   ├── start.py                 # Unified launcher (both servers)
 │   ├── generate_slots.py        # Weekly slot generation utility
+│   ├── vercel.json              # Backend routing config
 │   │
 │   └── agentcore/               # Deployed to AWS AgentCore Runtime
 │       ├── handler.py           # Agent entrypoint (Strands + BedrockAgentCoreApp)
@@ -140,14 +175,6 @@ Sethaul/
 │       ├── agent_deploy.py      # Deployment script
 │       └── requirements.txt     # Agent dependencies
 │
-├── Sethaul Database/            # Schema, seed data, ER diagrams
-│   ├── setuhaul_schema_and_seed.sql
-│   ├── setuhaul_database_guide.md
-│   └── insert_weekly_slots.sql
-│
-├── requirements.txt             # Root Python dependencies
-├── Procfile                     # Railway start command
-├── DEPLOYMENT.md                # Deployment guide
 └── README.md
 ```
 
@@ -168,12 +195,71 @@ Sethaul/
 
 4 views: `v_latest_eta`, `v_slot_availability`, `v_inbound_operational_state`, `v_current_facility_queue`
 
+### Recommended Indexes
+
+```sql
+-- Dock planner (fast date-range slot queries)
+CREATE INDEX idx_appointment_slots_facility_start ON appointment_slots(facility_id, slot_start_ts);
+CREATE INDEX idx_appointments_current_status ON appointments(is_current, appointment_status);
+CREATE INDEX idx_appointments_slot_id ON appointments(slot_id);
+
+-- Dashboard (shipments + exceptions filtering)
+CREATE INDEX idx_shipments_latest_eta ON shipments(latest_eta_ts);
+CREATE INDEX idx_shipments_facility_status ON shipments(destination_facility_id, current_status);
+CREATE INDEX idx_driver_exceptions_status ON driver_exceptions(exception_status, reported_at DESC);
+
+-- ETA history
+CREATE INDEX idx_eta_updates_shipment ON eta_updates(shipment_id, created_at DESC);
+```
+
+---
+
+## Vercel Deployment
+
+Both the frontend and backend are deployed to Vercel as separate projects in the same repo.
+
+### Frontend (`/client`)
+
+```bash
+cd client
+vercel --prod
+```
+
+- **Framework:** Vite (auto-detected)
+- **Build:** `npm run build` → outputs to `dist/`
+- **Routing:** SPA fallback via `vercel.json` rewrites
+- **Env vars:** `VITE_API_URL` pointing to the backend Vercel URL
+
+### Backend (`/server`)
+
+```bash
+cd server
+vercel --prod
+```
+
+- **Runtime:** `@vercel/python` serverless functions
+- **Entry:** `api/index.py` imports the FastAPI `app` from `server.py`
+- **Routing:** All requests routed to `api/index.py` via `vercel.json`
+- **Env vars:** `SUPABASE_URL`, `SUPABASE_KEY`, `AGENT_ARN`, `AWS_REGION`, `MEMORY_ID`
+
+### Environment Variables
+
+| Variable | Where | Description |
+|----------|-------|-------------|
+| `VITE_API_URL` | Client (Vercel) | Backend API URL (e.g. `https://sethaul-api.vercel.app`) |
+| `SUPABASE_URL` | Server (Vercel) | Supabase project URL |
+| `SUPABASE_KEY` | Server (Vercel) | Supabase anon/service key |
+| `AGENT_ARN` | Server (Vercel) | AgentCore runtime ARN |
+| `AWS_REGION` | Server (Vercel) | AWS region for Bedrock |
+| `MEMORY_ID` | Server (Vercel) | AgentCore STM memory ID |
+| `CORS_ORIGINS` | Server (Vercel) | Comma-separated allowed origins |
+
 ---
 
 ## Running Locally
 
 ```bash
-# 1. Agent (port 8080)
+# 1. Agent (port 8080) — optional, only needed for chat
 cd server/agentcore
 python handler.py
 
@@ -181,14 +267,14 @@ python handler.py
 cd server
 python server.py
 
-# 3. Frontend (port 3000)
+# 3. Frontend (port 5173)
 cd client
 npm install
 npm run dev
 ```
 
-Set environment variables in `.env`:
-```
+Create a `.env` file in the project root:
+```env
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-anon-key
 AWS_REGION=us-east-1
@@ -196,17 +282,10 @@ MEMORY_ID=your-memory-id
 AGENT_ARN=arn:aws:bedrock-agentcore:us-east-1:123456:runtime/your-agent
 ```
 
----
-
-## Deployment
-
-| Component | Platform | Command |
-|-----------|----------|---------|
-| Frontend | Vercel | `cd client && vercel` |
-| Backend | Railway | `cd server && railway up` |
-| Agent | AgentCore | `cd server/agentcore && python agent_deploy.py` |
-
-See `DEPLOYMENT.md` for detailed steps and environment variable reference.
+And `client/.env`:
+```env
+VITE_API_URL=http://localhost:8000
+```
 
 ---
 
@@ -254,3 +333,16 @@ Every ETA change is recorded in `eta_updates` with source attribution:
 | `DRIVER_DECLARED` | Driver reports via chat agent |
 | `OPERATIONS_OVERRIDE` | Operations person manually reassigns |
 | `WAREHOUSE_ESTIMATE` | Warehouse provides updated estimate |
+
+The admin can view the complete ETA timeline for any shipment by clicking on its ID in the dashboard — showing who changed it, when, the new ETA, delay reason, and notes.
+
+---
+
+## Performance Optimizations
+
+- **Code splitting** — DockPlannerTab is lazy-loaded (only fetched when tab is active)
+- **Deferred data loading** — exceptions/shipments data not fetched until user switches to those tabs
+- **Single-query backend** — dock planner endpoint does 3 parallel queries + O(1) hashmap join (no N+1)
+- **Filters cached** — loaded once and reused across tab switches
+- **Memoized grid computations** — `useMemo` throughout to avoid unnecessary re-renders
+- **Minimal payloads** — backend returns only fields needed for each view
