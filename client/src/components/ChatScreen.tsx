@@ -29,7 +29,7 @@ function ChatScreen({ driver, onLogout }: ChatScreenProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string>("");
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(true);
 
   // Shipment selection
   const [shipments, setShipments] = useState<ShipmentOption[]>([]);
@@ -91,31 +91,49 @@ function ChatScreen({ driver, onLogout }: ChatScreenProps) {
   const handleShipmentChange = useCallback(
     async (shipmentId: string) => {
       setSelectedShipment(shipmentId);
-      const session = driver.active_sessions?.find((s) => s.shipment_id == shipmentId);
-      if (!session) {
+      setError(null);
+
+      if (!shipmentId) {
+        setMessages([]);
         return;
       }
-      try {
-        getSession(session.session_id)
-        .then((session) => {
-          if (session.messages && session.messages.length > 0) {
-            const history: Message[] = session.messages.map((msg) => ({
+
+      // Check if there's an existing session for this shipment
+      const existingSession = driver.active_sessions?.find((s) => s.shipment_id === shipmentId);
+
+      if (existingSession) {
+        // Resume existing session — load its history
+        setSessionId(existingSession.session_id);
+        try {
+          const sessionData = await getSession(existingSession.session_id);
+          if (sessionData.messages && sessionData.messages.length > 0) {
+            const history: Message[] = sessionData.messages.map((msg) => ({
               id: msg.chat_message_id || crypto.randomUUID(),
               role: msg.sender_type === "DRIVER" ? "user" : "assistant",
               content: msg.message_text,
               timestamp: new Date(msg.message_ts).getTime(),
             }));
             setMessages(history);
+          } else {
+            setMessages([]);
           }
-        })
-        .catch((err) => console.warn("Failed to load session history:", err));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to create session");
+        } catch (err) {
+          console.warn("Failed to load session history:", err);
+          setMessages([]);
+        }
+      } else {
+        // No existing session for this shipment — create a fresh one
+        setMessages([]);
+        try {
+          const res = await createNewSession(driver.driver_id);
+          setSessionId(res.session_id);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to create session");
+        }
       }
     },
-    []
+    [driver.active_sessions, driver.driver_id]
   );
-
   const handleSend = useCallback(
     async (text: string) => {
       if (!sessionId || !selectedShipment) return;
@@ -224,15 +242,35 @@ function ChatScreen({ driver, onLogout }: ChatScreenProps) {
           />
         </div>
         <div className={`chat-layout__panel ${panelCollapsed ? "chat-layout__panel--collapsed" : ""}`}>
+          <button
+            className="panel-close-mobile"
+            onClick={() => setPanelCollapsed(true)}
+            aria-label="Close panel"
+          >
+            &times;
+          </button>
           <DriverShipmentPanel driverId={driver.driver_id} collapsed={panelCollapsed} />
         </div>
-        <button
-          className="panel-toggle"
-          onClick={() => setPanelCollapsed((v) => !v)}
-          title={panelCollapsed ? "Show shipments" : "Hide shipments"}
-        >
-          {panelCollapsed ? "◀" : "▶"}
-        </button>
+        {panelCollapsed && (
+          <button
+            className="panel-toggle"
+            onClick={() => setPanelCollapsed(false)}
+            title="Show shipments"
+            aria-label="Show shipments panel"
+          >
+            ☰
+          </button>
+        )}
+        {!panelCollapsed && (
+          <button
+            className="panel-toggle panel-toggle--hide"
+            onClick={() => setPanelCollapsed(true)}
+            title="Hide shipments"
+            aria-label="Hide shipments panel"
+          >
+            ▶
+          </button>
+        )}
       </div>
     </div>
   );

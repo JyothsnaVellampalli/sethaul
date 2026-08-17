@@ -242,6 +242,92 @@ def _ensure_chat_thread(session_id: str, driver_id: str, shipment_id: str) -> No
         logger.warning(f"[chat] Failed to create chat_thread (may already exist): {e}")
 
 
+def _build_shipment_status_context(shipment_id: str, client) -> list[str]:
+    """
+    Build context lines with ETA approval status, exception info, and appointment
+    details for the selected shipment. This helps the agent answer status questions.
+    """
+    lines = [
+        "[SHIPMENT STATUS — use this to answer driver questions about ETA, appointments, and approval status]",
+    ]
+
+    # Latest exception for this shipment
+    exc_resp = (
+        client.table("driver_exceptions")
+        .select("exception_id, exception_type, severity_code, exception_status, declared_eta_ts, reported_at, description")
+        .eq("shipment_id", shipment_id)
+        .order("reported_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    latest_exception = exc_resp.data[0] if exc_resp.data else None
+
+    # Latest ETA update
+    eta_resp = (
+        client.table("eta_updates")
+        .select("source_type, declared_eta_ts, confidence_code, delay_reason_code, note, created_at")
+        .eq("shipment_id", shipment_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    latest_eta = eta_resp.data[0] if eta_resp.data else None
+
+    # Current appointment
+    appt_resp = (
+        client.table("appointments")
+        .select("appointment_id, appointment_status, booking_source, confirmed_at, appointment_slots:slot_id(slot_start_ts, slot_end_ts)")
+        .eq("shipment_id", shipment_id)
+        .eq("is_current", 1)
+        .in_("appointment_status", ["PENDING_CONFIRMATION", "CONFIRMED", "IN_PROGRESS"])
+        .limit(1)
+        .execute()
+    )
+    current_appt = appt_resp.data[0] if appt_resp.data else None
+
+    # ETA approval status
+    if latest_exception:
+        status = latest_exception["exception_status"]
+        if status in ("OPEN", "NEEDS_INFORMATION", "WAITING_CONFIRMATION"):
+            lines.append(f"  ETA approval: PENDING — operations team is reviewing your request.")
+            lines.append(f"  Requested ETA: {latest_exception.get('declared_eta_ts', 'unknown')}")
+            lines.append(f"  Issue type: {latest_exception['exception_type']}")
+        elif status == "RESOLVED":
+            lines.append(f"  ETA approval: APPROVED — your ETA change has been approved by operations.")
+        elif status == "ESCALATED":
+            lines.append(f"  ETA approval: ESCALATED — the issue has been escalated for further review.")
+        else:
+            lines.append(f"  Exception status: {status}")
+        lines.append(f"  Exception details: {latest_exception.get('description', '')[:120]}")
+    else:
+        lines.append(f"  ETA approval: No pending ETA change requests for this shipment.")
+
+    # Latest ETA update info
+    if latest_eta:
+        source_map = {
+            "ORIGINAL_PLAN": "set at shipment creation",
+            "DRIVER_DECLARED": "updated by you (the driver)",
+            "OPERATIONS_OVERRIDE": "updated by the operations team",
+            "SYSTEM_CALCULATED": "auto-calculated by the system",
+        }
+        source_label = source_map.get(latest_eta["source_type"], latest_eta["source_type"])
+        lines.append(f"  Latest ETA: {latest_eta['declared_eta_ts']} ({source_label})")
+        if latest_eta.get("note"):
+            lines.append(f"  ETA note: {latest_eta['note']}")
+
+    # Current appointment
+    if current_appt:
+        slot = current_appt.get("appointment_slots") or {}
+        lines.append(f"  Appointment status: {current_appt['appointment_status']}")
+        lines.append(f"  Slot: {slot.get('slot_start_ts', '?')} to {slot.get('slot_end_ts', '?')}")
+        lines.append(f"  Booked via: {current_appt.get('booking_source', 'unknown')}")
+    else:
+        lines.append(f"  Appointment: No active appointment slot assigned.")
+
+    lines.append("[END SHIPMENT STATUS]")
+    return lines
+
+
 def _build_driver_context(driver_id: str, selected_shipment_id: str = "") -> str:
     """
     Build a context block with the driver's identity and active shipment details.
@@ -342,6 +428,13 @@ def _build_driver_context(driver_id: str, selected_shipment_id: str = "") -> str
     lines.append("- Ask only for MISSING info: the issue, estimated arrival time, and any constraints.")
     lines.append("- Do NOT ask for date or day — assume today unless driver says otherwise.")
     lines.append("[END DRIVER CONTEXT]")
+
+    # --- ETA / Exception / Appointment status for selected shipment ---
+    if selected_shipment_id:
+        eta_lines = _build_shipment_status_context(selected_shipment_id, client)
+        if eta_lines:
+            lines.append("")
+            lines.extend(eta_lines)
 
     return "\n".join(lines)
 

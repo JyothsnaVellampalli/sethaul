@@ -2532,3 +2532,220 @@ body,
   background: #f3f4f6;
   color: #6b7280;
 }
+
+
+/* ---- Mobile Close Button for Panel ---- */
+
+.panel-close-mobile {
+  display: none;
+}
+
+/* ---- Panel Toggle refinements ---- */
+
+.panel-toggle--hide {
+  /* On desktop, positioned same as default */
+}
+
+/* ===========================================================================
+   Mobile Responsive — Chat Screen
+   =========================================================================== */
+
+@media (max-width: 600px) {
+  /* App container fills full screen on mobile */
+  .app {
+    max-width: 100%;
+    margin: 0;
+    height: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* Chat header — compact */
+  .chat-header {
+    padding: 10px 14px;
+  }
+
+  .chat-header__title {
+    font-size: 14px;
+  }
+
+  .chat-header__actions button {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+
+  /* Shipment selector — stack on mobile */
+  .shipment-selector {
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .shipment-selector__label {
+    display: none;
+  }
+
+  .shipment-selector__dropdown {
+    max-width: 100%;
+    font-size: 13px;
+  }
+
+  .shipment-selector__active {
+    display: none;
+  }
+
+  /* Chat layout — full width, panel overlays */
+  .chat-layout {
+    position: relative;
+  }
+
+  .chat-layout__main {
+    width: 100%;
+  }
+
+  /* Panel — full-screen overlay on mobile */
+  .chat-layout__panel {
+    position: fixed;
+    inset: 0;
+    width: 100% !important;
+    height: 100%;
+    z-index: 100;
+    border-left: none;
+    background: var(--color-surface);
+    overflow-y: auto;
+    transition: transform 0.25s ease, opacity 0.2s ease;
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  .chat-layout__panel--collapsed {
+    transform: translateX(100%);
+    opacity: 0;
+    pointer-events: none;
+    width: 0 !important;
+  }
+
+  /* Show close button on mobile panel */
+  .panel-close-mobile {
+    display: flex;
+    position: sticky;
+    top: 0;
+    align-self: flex-end;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 50%;
+    font-size: 20px;
+    cursor: pointer;
+    margin: 12px 12px 0 auto;
+    z-index: 101;
+    color: var(--color-text);
+  }
+
+  .panel-close-mobile:hover {
+    background: var(--color-border);
+  }
+
+  /* Panel toggle — bottom-right FAB style on mobile */
+  .panel-toggle {
+    position: fixed;
+    bottom: 80px;
+    right: 14px;
+    top: auto;
+    width: 44px;
+    height: 44px;
+    font-size: 18px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    color: white;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 50;
+  }
+
+  .panel-toggle:hover {
+    background: var(--color-primary-hover);
+  }
+
+  .panel-toggle--hide {
+    display: none;
+  }
+
+  /* Driver panel — more padding on mobile for readability */
+  .driver-panel {
+    padding: 8px 16px 24px;
+  }
+
+  .driver-panel__header {
+    font-size: 15px;
+    margin-bottom: 14px;
+  }
+
+  .driver-panel__shipment {
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+
+  .driver-panel__field {
+    font-size: 13px;
+    padding: 5px 0;
+  }
+
+  .driver-panel__field-value {
+    max-width: 55%;
+  }
+
+  .driver-panel__eta-status {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  /* Messages — slightly larger text for readability */
+  .message__text {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* Chat input — larger touch target */
+  .chat-input {
+    padding: 10px 12px;
+  }
+
+  .chat-input__field {
+    font-size: 15px;
+    padding: 10px 12px;
+    min-height: 42px;
+  }
+
+  .chat-input__send {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+
+  /* Error banner */
+  .error-banner {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+}
+
+/* Slightly larger phones / small tablets (601-768px) */
+@media (min-width: 601px) and (max-width: 768px) {
+  .app {
+    max-width: 100%;
+    margin: 0;
+    height: 100%;
+    border-radius: 0;
+  }
+
+  .chat-layout__panel {
+    width: 280px;
+  }
+
+  .panel-close-mobile {
+    display: none;
+  }
+}
