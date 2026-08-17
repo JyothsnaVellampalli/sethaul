@@ -1051,7 +1051,7 @@ async def admin_dashboard(
     if driver_id:
         shipment_query = shipment_query.eq("driver_id", driver_id)
 
-    shipment_query = shipment_query.order("latest_eta_ts")
+    shipment_query = shipment_query.order("latest_eta_ts", desc=True)
     shipments_response = shipment_query.execute()
     shipments = shipments_response.data or []
 
