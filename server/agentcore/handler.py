@@ -163,11 +163,15 @@ def _extract_response_text(result) -> str:
 def _create_agent(history_messages: List[Dict], session_id: str):
     """Create a Strands Agent with tools and pre-loaded conversation history."""
     from strands import Agent
-    from strands.models import BedrockModel
+    from strands.models import BedrockModel, CacheConfig
     from strands.types.content import SystemContentBlock
     from tools import record_driver_issue
 
-    model = BedrockModel(**config.model_details)
+    model = BedrockModel(
+        **config.model_details,
+        cache_tools = "default",
+        cache_config = CacheConfig(strategy="auto")
+    )
 
     # Inject session_id into the system prompt so the agent can pass it to the tool
     session_context = (
@@ -175,7 +179,7 @@ def _create_agent(history_messages: List[Dict], session_id: str):
         f"Always use this session_id when calling the record_driver_issue tool."
     )
     full_prompt = SYSTEM_PROMPT + session_context
-    system_content = [SystemContentBlock(text=full_prompt)]
+    system_content = [SystemContentBlock(text=full_prompt), SystemContentBlock(cachePoint={"type": "default"})]
 
     agent = Agent(
         name=config.agent_name,
